@@ -23,7 +23,7 @@ from rex.multi_year_resource import MultiYearWindResource
 from rex.utilities.bc_parse_table import parse_bc_table
 from rex.utilities.execution import SpawnProcessPool
 from rex.utilities.loggers import create_dirs, log_mem
-from rex.utilities.utilities import parse_year
+from rex.utilities.utilities import parse_year, check_res_file
 
 from reV.config.output_request import SAMOutputRequest
 from reV.econ.utilities import lcoe_fcr
@@ -80,7 +80,8 @@ class BespokeMultiPlantData:
             Option to pre-load relative humidity data (useful for icing
             runs). If ``False``, relative humidities are not loaded.
         """
-        self.res_fpath = res_fpath
+        self.res_fpath = ([res_fpath]
+                          if isinstance(res_fpath, str) else res_fpath)
         self.sc_gid_to_hh = sc_gid_to_hh
         self.sc_gid_to_res_gid = sc_gid_to_res_gid
         self.hh_to_res_gids = {}
@@ -104,8 +105,9 @@ class BespokeMultiPlantData:
             hh: sorted(gids) for hh, gids in self.hh_to_res_gids.items()
         }
 
+        hsds = all(check_res_file(fp)[1] for fp in self.res_fpath)
         start_time = time.time()
-        with MultiYearWindResource(self.res_fpath) as res:
+        with MultiYearWindResource(self.res_fpath, hsds=hsds) as res:
             self._wind_dirs = {
                 hh: res[f"winddirection_{hh}m", :, gids]
                 for hh, gids in self.hh_to_res_gids.items()
@@ -280,8 +282,8 @@ class BespokeSinglePlant:
             Variables available are:
 
                 - ``n_turbines``: the number of turbines
-                - ``system_capacity``: wind plant capacity
-                - ``aep``: annual energy production
+                - ``system_capacity``: wind plant capacity (kW)
+                - ``aep``: annual energy production (kWh)
                 - ``avg_sl_dist_to_center_m``: Average straight-line
                   distance to the supply curve point center from all
                   turbine locations (in m). Useful for computing plant
@@ -290,20 +292,22 @@ class BespokeSinglePlant:
                   distance to the medoid of all turbine locations
                   (in m). Useful for computing plant BOS costs.
                 - ``nn_conn_dist_m``: Total BOS connection distance
-                  using nearest-neighbor connections. This variable is
-                  only available for the
+                  using nearest-neighbor connections (in m). This
+                  variable is only available for the
                   ``balance_of_system_cost_function`` equation.
                 - ``fixed_charge_rate``: user input fixed_charge_rate if
                   included as part of the sam system config.
-                - ``capital_cost``: plant capital cost as evaluated
+                - ``capital_cost``: plant capital cost ($) as evaluated
                   by `capital_cost_function`
                 - ``fixed_operating_cost``: plant fixed annual operating
-                  cost as evaluated by `fixed_operating_cost_function`
+                  cost ($/year) as evaluated by
+                  `fixed_operating_cost_function`
                 - ``variable_operating_cost``: plant variable annual
-                  operating cost as evaluated by
+                  operating cost ($/kWh) as evaluated by
                   `variable_operating_cost_function`
                 - ``balance_of_system_cost``: plant balance of system
-                  cost as evaluated by `balance_of_system_cost_function`
+                  cost ($) as evaluated by
+                  `balance_of_system_cost_function`
                 - ``self.wind_plant``: the SAM wind plant object,
                   through which all SAM variables can be accessed
 
@@ -486,7 +490,9 @@ class BespokeSinglePlant:
         self._pre_loaded_data = pre_loaded_data
         self._outputs = {}
 
-        res = res if not isinstance(res, str) else MultiYearWindResource(res)
+        if isinstance(res, str):
+            __, hsds = check_res_file(res)
+            res = MultiYearWindResource(res, hsds=hsds)
 
         self._sc_point = AggSCPoint(
             gid,
@@ -1085,8 +1091,8 @@ class BespokeSinglePlant:
             fcr = lcoe_kwargs['fixed_charge_rate']
             cc = lcoe_kwargs['capital_cost']
             foc = lcoe_kwargs['fixed_operating_cost']
-            voc = lcoe_kwargs['variable_operating_cost']
-            aep = self.outputs['annual_energy-means']
+            voc = lcoe_kwargs['variable_operating_cost']  # $/kWh
+            aep = self.outputs['annual_energy-means']  # kWh
 
             my_mean_lcoe = lcoe_fcr(fcr, cc, foc, aep, voc)
 
@@ -1182,6 +1188,7 @@ class BespokeSinglePlant:
                                   'wind_resource_data',
                                   'wind_turbine_powercurve_powerout',
                                   'adjust_hourly',
+                                  'adjust_timeindex',
                                   'capital_cost',
                                   'fixed_operating_cost',
                                   'variable_operating_cost',
@@ -1385,12 +1392,12 @@ class BespokeSinglePlant:
         self._meta[SupplyCurveField.EOS_MULT] = eos_mult
         self._meta[SupplyCurveField.REG_MULT] = reg_mult_cc
 
-        self._meta[SupplyCurveField.COST_SITE_OCC_USD_PER_AC_MW] = (
+        self._meta[SupplyCurveField.COST_SITE_CC_USD_PER_AC_MW] = (
             (self.plant_optimizer.capital_cost
              + self.plant_optimizer.balance_of_system_cost)
             / capacity_ac_mw
         )
-        self._meta[SupplyCurveField.COST_BASE_OCC_USD_PER_AC_MW] = (
+        self._meta[SupplyCurveField.COST_BASE_CC_USD_PER_AC_MW] = (
             (self.plant_optimizer.capital_cost / eos_mult / reg_mult_cc
              + self.plant_optimizer.balance_of_system_cost / reg_mult_bos)
             / capacity_ac_mw
@@ -1404,14 +1411,13 @@ class BespokeSinglePlant:
             / reg_mult_foc
             / capacity_ac_mw
         )
-        self._meta[SupplyCurveField.COST_SITE_VOC_USD_PER_AC_MW] = (
-            self.plant_optimizer.variable_operating_cost
-            / capacity_ac_mw
+        self._meta[SupplyCurveField.COST_SITE_VOC_USD_PER_AC_MWH] = (
+            self.plant_optimizer.variable_operating_cost * 1000  # to $/MWh
         )
-        self._meta[SupplyCurveField.COST_BASE_VOC_USD_PER_AC_MW] = (
+        self._meta[SupplyCurveField.COST_BASE_VOC_USD_PER_AC_MWH] = (
             self.plant_optimizer.variable_operating_cost
             / reg_mult_voc
-            / capacity_ac_mw
+            * 1000  # to $/MWh
         )
         self._meta[SupplyCurveField.FIXED_CHARGE_RATE] = (
             self.plant_optimizer.fixed_charge_rate
@@ -1567,8 +1573,8 @@ class BespokeWindPlants(BaseAggregation):
             for computation are:
 
                 - ``n_turbines``: the number of turbines
-                - ``system_capacity``: wind plant capacity
-                - ``aep``: annual energy production
+                - ``system_capacity``: wind plant capacity (kW)
+                - ``aep``: annual energy production (kWh)
                 - ``avg_sl_dist_to_center_m``: Average straight-line
                   distance to the supply curve point center from all
                   turbine locations (in m). Useful for computing plant
@@ -1577,20 +1583,22 @@ class BespokeWindPlants(BaseAggregation):
                   distance to the medoid of all turbine locations
                   (in m). Useful for computing plant BOS costs.
                 - ``nn_conn_dist_m``: Total BOS connection distance
-                  using nearest-neighbor connections. This variable is
-                  only available for the
+                  using nearest-neighbor connections (in m). This
+                  variable is only available for the
                   ``balance_of_system_cost_function`` equation.
                 - ``fixed_charge_rate``: user input fixed_charge_rate if
                   included as part of the sam system config.
-                - ``capital_cost``: plant capital cost as evaluated
+                - ``capital_cost``: plant capital cost ($) as evaluated
                   by `capital_cost_function`
                 - ``fixed_operating_cost``: plant fixed annual operating
-                  cost as evaluated by `fixed_operating_cost_function`
+                  cost ($/year) as evaluated by
+                  `fixed_operating_cost_function`
                 - ``variable_operating_cost``: plant variable annual
-                  operating cost as evaluated by
+                  operating cost ($/kWh) as evaluated by
                   `variable_operating_cost_function`
                 - ``balance_of_system_cost``: plant balance of system
-                  cost as evaluated by `balance_of_system_cost_function`
+                  cost ($) as evaluated by
+                  `balance_of_system_cost_function`
                 - ``self.wind_plant``: the SAM wind plant object,
                   through which all SAM variables can be accessed
 
@@ -1968,7 +1976,8 @@ class BespokeWindPlants(BaseAggregation):
             pre_extract_inclusions=pre_extract_inclusions,
         )
 
-        self._res_fpath = res_fpath
+        self._res_fpath = ([res_fpath]
+                           if isinstance(res_fpath, str) else res_fpath)
         self._obj_fun = objective_function
         self._cap_cost_fun = capital_cost_function
         self._foc_fun = fixed_operating_cost_function
@@ -2119,8 +2128,9 @@ class BespokeWindPlants(BaseAggregation):
                     )
                 )
 
+        hsds = all(check_res_file(fp)[1] for fp in self._res_fpath)
         # just check that this file exists, cannot check res_fpath if *glob
-        with MultiYearWindResource(self._res_fpath) as f:
+        with MultiYearWindResource(self._res_fpath, hsds=hsds) as f:
             assert any(f.dsets)
 
     def _pre_load_data(self, pre_load_data):
@@ -2490,6 +2500,7 @@ class BespokeWindPlants(BaseAggregation):
             "area_filter_kernel": area_filter_kernel,
             "min_area": min_area,
             "h5_handler": MultiYearWindResource,
+            "hsds": all(check_res_file(fp)[1] for fp in res_fpath),
         }
 
         with AggFileHandler(excl_fpath, res_fpath, **file_kwargs) as fh:

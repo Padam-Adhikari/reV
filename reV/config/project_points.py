@@ -464,8 +464,10 @@ class ProjectPoints:
         h_var = "wind_turbine_hub_ht"
         if self._h is None:
             if "wind" in self.tech:
-                # wind technology, get a list of h values
-                self._h = [self[site][1][h_var] for site in self.sites]
+                if h_var in self.df.columns:
+                    self._h = self.df[h_var].values.tolist()
+                else:
+                    self._h = [self[site][1][h_var] for site in self.sites]
 
         return self._h
 
@@ -837,7 +839,6 @@ class ProjectPoints:
             logger.error(msg)
             raise ConfigError(msg)
 
-
         unused_configs = set(curtail_configs) - set(df_configs)
         if unused_configs:
             msg = ("One or more curtailment configurations not found in "
@@ -1164,12 +1165,14 @@ class ProjectPoints:
         multi_h5_res, hsds = check_res_file(res_file)
         if multi_h5_res:
             res_cls = MultiFileResourceX
+            res_kwargs = {}
         else:
             res_cls = ResourceX
+            res_kwargs = {"hsds": hsds}
 
         logger.info("Extracting ProjectPoints for desired regions")
         points = []
-        with res_cls(res_file, hsds=hsds) as f:
+        with res_cls(res_file, **res_kwargs) as f:
             meta = f.meta
             for region, region_col in regions.items():
                 logger.debug("- {}: {}".format(region_col, region))
@@ -1181,7 +1184,7 @@ class ProjectPoints:
                     if duplicates:
                         msg = (
                             "reV Cannot currently handle duplicate "
-                            "Resource gids! The given regions containg the "
+                            "Resource gids! The given regions containing the "
                             "same gids:\n{}".format(duplicates)
                         )
                         logger.error(msg)

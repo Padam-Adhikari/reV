@@ -101,12 +101,12 @@ EXPECTED_META_COLUMNS = ["gid",  # needed for H5 collection to work properly
                          SupplyCurveField.SC_POINT_ANNUAL_ENERGY_MWH,
                          SupplyCurveField.EOS_MULT,
                          SupplyCurveField.REG_MULT,
-                         SupplyCurveField.COST_BASE_OCC_USD_PER_AC_MW,
-                         SupplyCurveField.COST_SITE_OCC_USD_PER_AC_MW,
+                         SupplyCurveField.COST_BASE_CC_USD_PER_AC_MW,
+                         SupplyCurveField.COST_SITE_CC_USD_PER_AC_MW,
                          SupplyCurveField.COST_BASE_FOC_USD_PER_AC_MW,
                          SupplyCurveField.COST_SITE_FOC_USD_PER_AC_MW,
-                         SupplyCurveField.COST_BASE_VOC_USD_PER_AC_MW,
-                         SupplyCurveField.COST_SITE_VOC_USD_PER_AC_MW,
+                         SupplyCurveField.COST_BASE_VOC_USD_PER_AC_MWH,
+                         SupplyCurveField.COST_SITE_VOC_USD_PER_AC_MWH,
                          SupplyCurveField.FIXED_CHARGE_RATE,
                          SupplyCurveField.INCLUDED_AREA,
                          SupplyCurveField.INCLUDED_AREA_CAPACITY_DENSITY,
@@ -136,7 +136,10 @@ def test_turbine_placement(gid=33):
         sam_sys_inputs["fixed_operating_cost_multiplier"] = 2
         sam_sys_inputs["variable_operating_cost_multiplier"] = 5
 
-        TechMapping.run(excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1)
+        TechMapping.run(
+            excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1,
+            sc_resolution=2560
+        )
         bsp = BespokeSinglePlant(gid, excl_fp, res_fp, TM_DSET,
                                  sam_sys_inputs,
                                  OBJECTIVE_FUNCTION,
@@ -230,7 +233,10 @@ def test_zero_area(gid=33):
         shutil.copy(RES.format(2013), res_fp.format(2013))
         res_fp = res_fp.format("*")
 
-        TechMapping.run(excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1)
+        TechMapping.run(
+            excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1,
+            sc_resolution=2560
+        )
         bsp = BespokeSinglePlant(gid, excl_fp, res_fp, TM_DSET,
                                  SAM_SYS_INPUTS,
                                  objective_function, CAP_COST_FUN,
@@ -274,7 +280,10 @@ def test_correct_turb_location(gid=33):
         shutil.copy(RES.format(2013), res_fp.format(2013))
         res_fp = res_fp.format("*")
 
-        TechMapping.run(excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1)
+        TechMapping.run(
+            excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1,
+            sc_resolution=2560
+        )
         bsp = BespokeSinglePlant(gid, excl_fp, res_fp, TM_DSET,
                                  SAM_SYS_INPUTS,
                                  objective_function, CAP_COST_FUN,
@@ -318,7 +327,10 @@ def test_packing_algorithm(gid=33):
         shutil.copy(RES.format(2013), res_fp.format(2013))
         res_fp = res_fp.format("*")
 
-        TechMapping.run(excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1)
+        TechMapping.run(
+            excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1,
+            sc_resolution=2560
+        )
         bsp = BespokeSinglePlant(
             gid,
             excl_fp,
@@ -381,7 +393,10 @@ def test_single(gid=33):
         shutil.copy(RES.format(2013), res_fp.format(2013))
         res_fp = res_fp.format("*")
 
-        TechMapping.run(excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1)
+        TechMapping.run(
+            excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1,
+            sc_resolution=2560
+        )
         bsp = BespokeSinglePlant(gid, excl_fp, res_fp, TM_DSET,
                                  SAM_SYS_INPUTS,
                                  OBJECTIVE_FUNCTION, CAP_COST_FUN,
@@ -470,7 +485,10 @@ def test_extra_outputs(gid=33):
         shutil.copy(RES.format(2013), res_fp.format(2013))
         res_fp = res_fp.format("*")
 
-        TechMapping.run(excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1)
+        TechMapping.run(
+            excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1,
+            sc_resolution=2560
+        )
 
         with pytest.raises(KeyError):
             bsp = BespokeSinglePlant(gid, excl_fp, res_fp, TM_DSET,
@@ -608,7 +626,10 @@ def test_bespoke():
             }
         )
 
-        TechMapping.run(excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1)
+        TechMapping.run(
+            excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1,
+            sc_resolution=2560
+        )
         sam_configs = copy.deepcopy(SAM_CONFIGS)
         sam_configs["default"]["fixed_charge_rate"] = 0.0975
 
@@ -678,34 +699,32 @@ def test_bespoke():
                 assert f[dset].any()  # not all zeros
 
         assert not np.allclose(
-            meta[SupplyCurveField.COST_SITE_OCC_USD_PER_AC_MW],
-            meta[SupplyCurveField.COST_BASE_OCC_USD_PER_AC_MW])
+            meta[SupplyCurveField.COST_SITE_CC_USD_PER_AC_MW],
+            meta[SupplyCurveField.COST_BASE_CC_USD_PER_AC_MW])
         assert not np.allclose(
             meta[SupplyCurveField.COST_SITE_FOC_USD_PER_AC_MW],
             meta[SupplyCurveField.COST_BASE_FOC_USD_PER_AC_MW])
         assert not np.allclose(
-            meta[SupplyCurveField.COST_SITE_VOC_USD_PER_AC_MW],
-            meta[SupplyCurveField.COST_BASE_VOC_USD_PER_AC_MW])
+            meta[SupplyCurveField.COST_SITE_VOC_USD_PER_AC_MWH],
+            meta[SupplyCurveField.COST_BASE_VOC_USD_PER_AC_MWH])
 
         fcr = meta[SupplyCurveField.FIXED_CHARGE_RATE]
-        cap_cost = (meta[SupplyCurveField.COST_SITE_OCC_USD_PER_AC_MW]
+        cap_cost = (meta[SupplyCurveField.COST_SITE_CC_USD_PER_AC_MW]
                     * meta[SupplyCurveField.CAPACITY_AC_MW])
         foc = (meta[SupplyCurveField.COST_SITE_FOC_USD_PER_AC_MW]
                * meta[SupplyCurveField.CAPACITY_AC_MW])
-        voc = (meta[SupplyCurveField.COST_SITE_VOC_USD_PER_AC_MW]
-               * meta[SupplyCurveField.CAPACITY_AC_MW])
+        voc = meta[SupplyCurveField.COST_SITE_VOC_USD_PER_AC_MWH]
         aep = meta[SupplyCurveField.SC_POINT_ANNUAL_ENERGY_MWH]
         lcoe_site = lcoe_fcr(fcr, cap_cost, foc, aep, voc)
 
-        cap_cost = (meta[SupplyCurveField.COST_BASE_OCC_USD_PER_AC_MW]
+        cap_cost = (meta[SupplyCurveField.COST_BASE_CC_USD_PER_AC_MW]
                     * meta[SupplyCurveField.CAPACITY_AC_MW]
                     * meta[SupplyCurveField.REG_MULT]
                     * meta[SupplyCurveField.EOS_MULT])
         foc = (meta[SupplyCurveField.COST_BASE_FOC_USD_PER_AC_MW]
                * meta[SupplyCurveField.CAPACITY_AC_MW]
                * np.array([3, 4]))
-        voc = (meta[SupplyCurveField.COST_BASE_VOC_USD_PER_AC_MW]
-               * meta[SupplyCurveField.CAPACITY_AC_MW]
+        voc = (meta[SupplyCurveField.COST_BASE_VOC_USD_PER_AC_MWH]
                * np.array([5, 6]))
         lcoe_base = lcoe_fcr(fcr, cap_cost, foc, aep, voc)
 
@@ -792,7 +811,10 @@ def test_consistent_eval_namespace(gid=33):
         shutil.copy(RES.format(2013), res_fp.format(2013))
         res_fp = res_fp.format("*")
 
-        TechMapping.run(excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1)
+        TechMapping.run(
+            excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1,
+            sc_resolution=2560
+        )
         bsp = BespokeSinglePlant(
             gid,
             excl_fp,
@@ -888,7 +910,10 @@ def test_bespoke_wind_plant_with_power_curve_losses():
         shutil.copy(RES.format(2013), res_fp.format(2013))
         res_fp = res_fp.format("*")
 
-        TechMapping.run(excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1)
+        TechMapping.run(
+            excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1,
+            sc_resolution=2560
+        )
         bsp = BespokeSinglePlant(33, excl_fp, res_fp, TM_DSET,
                                  SAM_SYS_INPUTS,
                                  OBJECTIVE_FUNCTION,
@@ -953,7 +978,10 @@ def test_bespoke_run_with_icing_cutoff():
         shutil.copy(RES.format(2013), res_fp.format(2013))
         res_fp = res_fp.format("*")
 
-        TechMapping.run(excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1)
+        TechMapping.run(
+            excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1,
+            sc_resolution=2560
+        )
         bsp = BespokeSinglePlant(
             33,
             excl_fp,
@@ -1026,7 +1054,10 @@ def test_bespoke_run_with_power_curve_losses():
         shutil.copy(RES.format(2013), res_fp.format(2013))
         res_fp = res_fp.format("*")
 
-        TechMapping.run(excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1)
+        TechMapping.run(
+            excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1,
+            sc_resolution=2560
+        )
         bsp = BespokeSinglePlant(
             33,
             excl_fp,
@@ -1094,7 +1125,10 @@ def test_bespoke_run_with_scheduled_losses():
         shutil.copy(RES.format(2013), res_fp.format(2013))
         res_fp = res_fp.format("*")
 
-        TechMapping.run(excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1)
+        TechMapping.run(
+            excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1,
+            sc_resolution=2560
+        )
         bsp = BespokeSinglePlant(33, excl_fp, res_fp, TM_DSET,
                                  SAM_SYS_INPUTS,
                                  OBJECTIVE_FUNCTION, CAP_COST_FUN,
@@ -1125,9 +1159,9 @@ def test_bespoke_run_with_scheduled_losses():
                 ],
             }
         ]
-        sam_inputs["adjust_hourly"] = [0] * 8760  # only needed for testing
+        sam_inputs["adjust_timeindex"] = [0] * 8760  # only needed for testing
         output_request = ("system_capacity", "cf_mean", "cf_profile",
-                          "adjust_hourly")
+                          "adjust_timeindex")
 
         bsp = BespokeSinglePlant(33, excl_fp, res_fp, TM_DSET,
                                  sam_inputs,
@@ -1154,7 +1188,8 @@ def test_bespoke_run_with_scheduled_losses():
         assert out[dset] > out_losses[dset]
 
     assert not np.allclose(
-        out_losses["adjust_hourly-2012"], out_losses["adjust_hourly-2013"]
+        out_losses["adjust_timeindex-2012"],
+        out_losses["adjust_timeindex-2013"]
     )
 
 
@@ -1172,7 +1207,10 @@ def test_bespoke_aep_is_zero_if_no_turbines_placed():
         shutil.copy(RES.format(2013), res_fp.format(2013))
         res_fp = res_fp.format("*")
 
-        TechMapping.run(excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1)
+        TechMapping.run(
+            excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1,
+            sc_resolution=2560
+        )
         bsp = BespokeSinglePlant(33, excl_fp, res_fp, TM_DSET,
                                  SAM_SYS_INPUTS,
                                  objective_function,
@@ -1242,7 +1280,10 @@ def test_bespoke_prior_run():
             }
         )
 
-        TechMapping.run(excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1)
+        TechMapping.run(
+            excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1,
+            sc_resolution=2560
+        )
 
         assert not os.path.exists(out_fpath1)
         assert not os.path.exists(out_fpath2)
@@ -1289,12 +1330,12 @@ def test_bespoke_prior_run():
             SupplyCurveField.CONVEX_HULL_AREA,
             SupplyCurveField.CONVEX_HULL_CAPACITY_DENSITY,
             SupplyCurveField.FULL_CELL_CAPACITY_DENSITY,
-            SupplyCurveField.COST_BASE_OCC_USD_PER_AC_MW,
-            SupplyCurveField.COST_SITE_OCC_USD_PER_AC_MW,
+            SupplyCurveField.COST_BASE_CC_USD_PER_AC_MW,
+            SupplyCurveField.COST_SITE_CC_USD_PER_AC_MW,
             SupplyCurveField.COST_BASE_FOC_USD_PER_AC_MW,
             SupplyCurveField.COST_SITE_FOC_USD_PER_AC_MW,
-            SupplyCurveField.COST_BASE_VOC_USD_PER_AC_MW,
-            SupplyCurveField.COST_SITE_VOC_USD_PER_AC_MW,
+            SupplyCurveField.COST_BASE_VOC_USD_PER_AC_MWH,
+            SupplyCurveField.COST_SITE_VOC_USD_PER_AC_MWH,
             SupplyCurveField.FIXED_CHARGE_RATE,
             SupplyCurveField.BESPOKE_AEP,
             SupplyCurveField.BESPOKE_OBJECTIVE,
@@ -1358,7 +1399,10 @@ def test_gid_map():
         fp_gid_map = os.path.join(td, "gid_map.csv")
         gid_map.to_csv(fp_gid_map)
 
-        TechMapping.run(excl_fp, RES.format(2013), dset=TM_DSET, max_workers=1)
+        TechMapping.run(
+            excl_fp, RES.format(2013), dset=TM_DSET, max_workers=1,
+            sc_resolution=2560
+        )
 
         assert not os.path.exists(out_fpath1)
         assert not os.path.exists(out_fpath2)
@@ -1459,7 +1503,10 @@ def test_bespoke_bias_correct():
         fp_bc = os.path.join(td, "bc.csv")
         bias_correct.to_csv(fp_bc)
 
-        TechMapping.run(excl_fp, RES.format(2013), dset=TM_DSET, max_workers=1)
+        TechMapping.run(
+            excl_fp, RES.format(2013), dset=TM_DSET, max_workers=1,
+            sc_resolution=2560
+        )
 
         assert not os.path.exists(out_fpath1)
         assert not os.path.exists(out_fpath2)
@@ -1526,7 +1573,10 @@ def test_cli(runner, clear_loggers):
         shutil.copy(RES.format(2013), res_fp_2.format(2013))
         res_fp = [res_fp_1.format(2012), res_fp_2.format("*")]
 
-        TechMapping.run(excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1)
+        TechMapping.run(
+            excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1,
+            sc_resolution=2560
+        )
 
         config = {
             "log_directory": td,
