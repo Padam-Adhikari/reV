@@ -8,7 +8,7 @@ build-backend = 'setuptools.build_meta'
 [project]
 name="NREL-reV"
 dynamic = ["version"]
-description = "National Renewable Energy Laboratory's (NREL's) Renewable Energy Potential(V) Model: reV"
+description = "National Laboratory of the Rockies' (NLR's) reV model"
 readme = {file = "README.rst", content-type = "text/x-rst"}
 authors = [
   {name = "Galen Maclaurin", email = "galen.maclaurin@nrel.gov"},
@@ -18,7 +18,7 @@ maintainers = [
   {name = "Paul Pinchuk", email = "ppinchuk@nrel.gov"},
 ]
 license = "BSD-3-Clause"
-keywords = ["reV", "NREL"]
+keywords = ["reV", "NLR"]
 requires-python = ">= 3.9"
 classifiers=[
   "Development Status :: 4 - Beta",
@@ -31,10 +31,10 @@ classifiers=[
   "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-  "NREL-gaps>=0.8.0,<0.9",
-  "NREL-NRWAL>=0.0.11,<0.1",
+  "NREL-gaps>=0.8.11",
+  "NREL-NRWAL>=0.0.11",
   "NREL-PySAM~=7.0.0",
-  "NREL-rex>=0.3.5,<0.4",
+  "NREL-rex>=0.4.0",
   "numpy>=2.0.2,<3",
   "packaging>=24.2,<25",
   "plotly>=6.0.1,<7",
@@ -44,7 +44,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
-  "pytest>=8.3.3,<9",
+  "pytest>=8.4.0,<9",
 ]
 dev = [
   "flake8",

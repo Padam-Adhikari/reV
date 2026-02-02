@@ -3,6 +3,7 @@
 """
 place turbines for bespoke wind plants
 """
+import re
 from functools import wraps
 
 import numpy as np
@@ -53,7 +54,8 @@ class PlaceTurbines:
                  fixed_operating_cost_function,
                  variable_operating_cost_function,
                  balance_of_system_cost_function,
-                 include_mask, pixel_side_length, min_spacing):
+                 include_mask, pixel_side_length, min_spacing,
+                 convex_hull_buffer=0):
         """
         Parameters
         ----------
@@ -95,7 +97,24 @@ class PlaceTurbines:
                   cost ($) as evaluated by
                   `balance_of_system_cost_function`
                 - ``self.wind_plant``: the SAM wind plant object,
-                  through which all SAM variables can be accessed
+                  through which all SAM variables can be accessed.
+
+                  .. IMPORTANT::
+                     When using the `self.wind_plant` variable,
+                     DO NOT include quotes around variable names (keys).
+
+                        - ❌ Wrong: ``self.wind_plant["annual_energy"]``
+                        - ✅ Correct: ``self.wind_plant[annual_energy]``
+
+                  .. IMPORTANT::
+                     It's possible for SAM wind plant variables to be
+                     ``None``, especially if something went wrong while
+                     optimizing the wind plant layout. In this case,
+                     your objective function may fail to evaluate and
+                     terminate the program entirely. To avoid this, add
+                     a default value for the variable in your objective
+                     function, like so:
+                     ``(self.wind_plant[annual_energy] or 0)``
 
         capital_cost_function : str
             The plant capital cost function as a string, must return the
@@ -123,21 +142,28 @@ class PlaceTurbines:
             Side length (m) of a single pixel of the `include_mask`.
         min_spacing : float
             The minimum spacing between turbines (in meters).
+        convex_hull_buffer : float, default=0
+            Buffer (in m) to apply to turbine location convex hull
+            before computing the convex hull area and capacity density.
+            By default, ``0``.
         """
 
         # inputs
         self.wind_plant = wind_plant
 
-        self.capital_cost_function = capital_cost_function
-        self.fixed_operating_cost_function = fixed_operating_cost_function
-        self.variable_operating_cost_function = \
-            variable_operating_cost_function
-        self.balance_of_system_cost_function = balance_of_system_cost_function
+        self.capital_cost_function = _fix_wp_keys(capital_cost_function)
+        self.fixed_operating_cost_function = _fix_wp_keys(
+            fixed_operating_cost_function)
+        self.variable_operating_cost_function = _fix_wp_keys(
+            variable_operating_cost_function)
+        self.balance_of_system_cost_function = _fix_wp_keys(
+            balance_of_system_cost_function)
 
-        self.objective_function = objective_function
+        self.objective_function = _fix_wp_keys(objective_function)
         self.include_mask = include_mask
         self.pixel_side_length = pixel_side_length
         self.min_spacing = min_spacing
+        self.convex_hull_buffer = convex_hull_buffer
 
         # internal variables
         self.nrows, self.ncols = np.shape(include_mask)
@@ -152,7 +178,6 @@ class PlaceTurbines:
         self.safe_polygons = None
         self._optimized_nn_conn_dist_m = None
 
-        self.ILLEGAL = ('import ', 'os.', 'sys.', '.__', '__.', 'eval', 'exec')
         self._preflight(self.objective_function)
         self._preflight(self.capital_cost_function)
         self._preflight(self.fixed_operating_cost_function)
@@ -161,7 +186,10 @@ class PlaceTurbines:
 
     def _preflight(self, eqn):
         """Run preflight checks on the equation string."""
-        for substr in self.ILLEGAL:
+        _illegal_substr = ('import ', 'os.', 'sys.', '.__', '__.', 'eval',
+                           'exec')
+
+        for substr in _illegal_substr:
             if substr in str(eqn):
                 msg = ('Will not evaluate string which contains "{}": {}'
                        .format(substr, eqn))
@@ -455,7 +483,7 @@ class PlaceTurbines:
         turbines = MultiPoint([Point(x, y)
                                for x, y in zip(self.turbine_x,
                                                self.turbine_y)])
-        return turbines.convex_hull
+        return turbines.convex_hull.buffer(self.convex_hull_buffer)
 
     @property
     @none_until_optimized
@@ -650,3 +678,10 @@ def _compute_nn_conn_dist(x_coords, y_coords):
         left_to_connect.mask[next_connection] = 1
 
     return total_dist
+
+
+def _fix_wp_keys(eqn):
+    """Surround key of `self.wind_plant` in quotes"""
+    pattern = r'(self\.wind_plant\[\s*)([^\]]+?)(\s*\])'
+    replacement = r'\1"\2"\3'
+    return re.sub(pattern, replacement, str(eqn))

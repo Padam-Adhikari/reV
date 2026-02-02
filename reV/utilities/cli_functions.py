@@ -2,13 +2,16 @@
 """
 General CLI utility functions.
 """
+import os
 import logging
+from copy import deepcopy
 from warnings import warn
 
+import pandas as pd
 from gaps.pipeline import Status
 from rex.utilities.loggers import init_mult
 
-from reV.utilities import ModuleName
+from reV.utilities import ModuleName, SupplyCurveField
 from reV.utilities.exceptions import ConfigWarning, PipelineError
 
 
@@ -115,3 +118,78 @@ def parse_from_pipeline(config, out_dir, config_key, target_modules):
                     .format(config_key, val[0]))
 
     return config
+
+
+def compile_descriptions(cols=None):
+    """Compile a meta table with reV column descriptions.
+
+    Descriptions are pulled from the
+    :class:`~reV.utilities.SupplyCurveField` enum, which
+    contains the known reV supply curve field descriptions. Columns
+    which do not have a known description are excluded from the
+    output.
+
+    Parameters
+    ----------
+    cols : iterable, optional
+        Optional iterable of column names to include in the output.
+        By default, ``None``, which compiles all known reV supply curve
+        field descriptions.
+
+    Returns
+    -------
+    pd.DataFrame
+        Pandas DataFrame containing column names, corresponding units,
+        and descriptions for each column. Only columns that have a known
+        description are included in the output.
+    """
+    if not cols:
+        cols = [c.value for c in SupplyCurveField]
+
+    data = []
+    for col in cols:
+        try:
+            scf = SupplyCurveField(col)
+        except ValueError:
+            continue
+
+        if scf.description is None:
+            continue
+
+        data.append((str(scf), scf.units, scf.description))
+
+    return pd.DataFrame(data, columns=["reV Column", "Units", "Description"])
+
+
+def add_to_run_attrs(run_attrs=None, config_file=None,
+                     module=ModuleName.GENERATION):
+    """Add config and project directory to run attrs
+
+    Parameters
+    ----------
+    run_attrs : dict, optional
+        Existing `run_attrs` (if any). By default, ``None``.
+    config_file : str, optional
+        Path to config file used for this module's run (if applicable).
+        This is used to store the run config in the output attrs.
+        By default, ``None``.
+    module : :obj:`~reV.utilities.ModuleName`, optional
+        Module that this run represents.
+        By default, ``ModuleName.GENERATION``.
+
+    Returns
+    -------
+    dict
+        Run attributes that can be written to the file's attrs.
+    """
+    out = {}
+    if run_attrs:
+        out = deepcopy(run_attrs)
+
+    out[f"{module}_config_fp"] = str(config_file)
+    out[f"{module}_config"] = "{}"
+    if config_file and os.path.exists(config_file):
+        with open(config_file, "r") as fh:
+            out[f"{module}_config"] = fh.read()
+
+    return out

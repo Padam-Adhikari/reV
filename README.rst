@@ -38,11 +38,11 @@
 
 .. inclusion-intro
 
-**reV** (the Renewable Energy Potential model)
-is an open-source geospatial techno-economic tool that
-estimates renewable energy technical potential (capacity and generation),
-system cost, and supply curves for solar photovoltaics (PV),
-concentrating solar power (CSP), geothermal, and wind energy.
+**reV** is an open-source geospatial techno-economic tool that
+estimates energy technical potential (capacity and generation),
+system cost, and supply curves for a variety of technologies, including
+but not limited to, geothermal (GT), pumped storage hydropower (PSH),
+solar photovoltaics (PV), concentrating solar power (CSP), wind energy, etc.
 reV allows researchers to include exhaustive spatial representation
 of the built and natural environment into the generation and cost estimates
 that it computes.
@@ -57,7 +57,7 @@ equally well-suited for regional infrastructure and deployment planning and anal
 
 
 For a detailed description of reV capabilities and functionality, see the
-`NREL reV technical report <https://www.nrel.gov/docs/fy19osti/73067.pdf>`_.
+`NLR reV technical report <https://www.nrel.gov/docs/fy19osti/73067.pdf>`_.
 
 How does reV work?
 ==================
@@ -68,7 +68,7 @@ A full reV execution consists of one or more compute modules
 strung together using a `pipeline framework <https://nrel.github.io/reV/_cli/reV%20pipeline.html>`_,
 or configured using `batch <https://nrel.github.io/reV/_cli/reV%20batch.html>`_.
 
-A typical reV workflow begins with input wind/solar/geothermal resource data
+A typical reV workflow begins with input resource data
 (following the `rex data format <https://nrel.github.io/rex/misc/examples.nsrdb.html#data-format>`_)
 that is passed through the generation module. This output is then collected across space and time
 (if executed on the HPC), before being sent off to be aggregated under user-specified land exclusion scenarios.
@@ -151,6 +151,23 @@ Option 2: Clone repo (recommended for developers)
         - ``reV``
 
 
+reV Ecosystem
+=============
+The reV model suite comes with a set of tools that can be used alongside the core model
+to assist with data preparation and analysis:
+
+- `reVX <https://nrel.github.io/reVX/>`_ - Collection of helper methods to pre- and post- process geospatial reV data (e.g. setback layers, inclusion masks, etc.)
+- `rex <https://nrel.github.io/rex/>`_ - Library to assist with reV-style data I/O, especially resource data
+- reVRt (Coming soon!) - reV routing tool used to compute transmission costs
+- `NRWAL <https://nrel.github.io/NRWAL/>`_ - Equation Library for detailed cost analysis (offshore, hydrogen, etc.)
+- reVeal (Coming soon!) - reV extension for load analysis and land characterization
+- `reVReports <https://github.com/NREL/reVReports>`_ - Tool for generating publication-ready maps of reV supply curve outputs
+- `reView <https://github.com/NREL/reView>`_ - Dashboard for interactive visualization of reV supply curve outputs
+- `reV tutorial <https://github.com/NREL/reV-tutorial>`_ - Collection of tutorials for learning how to use reV
+- `gaps <https://nrel.github.io/gaps/>`_ - Underlying reV pipeline job submission and management system
+
+
+
 reV command line tools
 ======================
 
@@ -217,6 +234,6 @@ Potential (reV) Model: A Geospatial Platform for Technical Potential and Supply
 Curve Modeling.” Golden, Colorado, United States: National Renewable Energy
 Laboratory. NREL/TP-6A20-73067. https://doi.org/10.2172/1563140.
 
-Grant Buster, Michael Rossol, Paul Pinchuk, Brandon N Benton, Robert Spencer,
-Mike Bannister, & Travis Williams. (2023).
-NREL/reV: reV 0.8.0 (v0.8.0). Zenodo. https://doi.org/10.5281/zenodo.8247528
+Buster, G., Pinchuk, P., Rossol, M., Benton, B., Gleason, M., Stanley, A. P.,
+Spencer, R., Bannister, M., & Williams, T. (2020). reV (Version 0.14.5)
+[Computer software]. https://github.com/NREL/reV

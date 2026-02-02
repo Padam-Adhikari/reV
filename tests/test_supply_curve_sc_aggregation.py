@@ -47,7 +47,7 @@ DATA_LAYERS = {
     "padus": {"dset": "ri_padus", "method": "mode"},
 }
 EXCL_DICT = {
-    "ri_srtm_slope": {"inclusion_range": (None, 5), "exclude_nodata": True},
+    "ri_srtm*slope": {"inclusion_range": (None, 5), "exclude_nodata": True},
     "ri_padus": {"exclude_values": [1], "exclude_nodata": True},
 }
 RTOL = 0.001
@@ -430,8 +430,10 @@ def test_data_layer_methods():
         "pct_slope_mean": {"dset": "ri_srtm_slope", "method": "mean"},
         "pct_slope_max": {"dset": "ri_srtm_slope", "method": "max"},
         "pct_slope_min": {"dset": "ri_srtm_slope", "method": "min"},
-        "reeds_region": {"dset": "ri_reeds_regions", "method": "category"},
-        "padus": {"dset": "ri_padus", "method": "category"},
+        "pct_slope_sum": {"dset": "ri_srtm_slope", "method": "sum"},
+        "pct_slope_mode": {"dset": "ri_srtm_slope", "method": "mode"},
+        "reeds_region_cat": {"dset": "ri_reeds_regions", "method": "category"},
+        "padus_cat": {"dset": "ri_padus", "method": "category"},
     }
 
     sca = SupplyCurveAggregation(
@@ -447,12 +449,12 @@ def test_data_layer_methods():
     for i in summary.index.values:
         # Check categorical data layers
         counts = summary.loc[i, SupplyCurveField.GID_COUNTS]
-        rr = summary.loc[i, 'reeds_region']
+        rr = summary.loc[i, 'reeds_region_cat']
         assert isinstance(rr, str)
         rr = json.loads(rr)
         assert isinstance(rr, dict)
         rr_sum = sum(list(rr.values()))
-        padus = summary.loc[i, "padus"]
+        padus = summary.loc[i, "padus_cat"]
         assert isinstance(padus, str)
         padus = json.loads(padus)
         assert isinstance(padus, dict)
@@ -471,10 +473,14 @@ def test_data_layer_methods():
         slope_mean = summary.loc[i, 'pct_slope_mean']
         slope_max = summary.loc[i, 'pct_slope_max']
         slope_min = summary.loc[i, 'pct_slope_min']
+        slope_sum = summary.loc[i, 'pct_slope_sum']
+        slope_mode = summary.loc[i, 'pct_slope_mode']
         if n > 3:  # sc points with <= 3 90m pixels can have min == mean == max
-            assert slope_min < slope_mean < slope_max
+            assert slope_min < slope_mean < slope_max <= slope_sum
         else:
-            assert slope_min <= slope_mean <= slope_max
+            assert slope_min <= slope_mean <= slope_max <= slope_sum
+
+        assert slope_min <= slope_mode <= slope_max
 
 
 @pytest.mark.parametrize(
@@ -627,6 +633,7 @@ def test_recalc_lcoe(cap_cost_scale, voc):
 @pytest.mark.parametrize("tm_dset", ("techmap_ri", "techmap_ri_new"))
 @pytest.mark.parametrize("pre_extract", (True, False))
 def test_cli_basic_agg(runner, clear_loggers, tm_dset, pre_extract):
+    """Test basic sc agg cli invocation"""
     with tempfile.TemporaryDirectory() as td:
         excl_fp = os.path.join(td, "excl.h5")
         shutil.copy(EXCL, excl_fp)
@@ -752,7 +759,7 @@ def test_agg_zones(zone_config, max_workers, pre_extract_inclusions):
                 apply_legacy_remap = True
             else:
                 excl_dict = {
-                    k: v for k, v in EXCL_DICT.items() if k == "ri_srtm_slope"
+                    k: v for k, v in EXCL_DICT.items() if k == "ri_srtm*slope"
                 }
                 res_class_bins = None
                 baseline = os.path.join(
@@ -908,6 +915,51 @@ def test_cli_agg_zones(runner, clear_loggers):
         summary[compare_cols],
         s_baseline_subset[compare_cols], check_dtype=False, rtol=0.0001
     )
+
+
+def test_basic_col_desc_cli(runner, clear_loggers):
+    """Test basic sc-col-descriptions cli invocation"""
+    with tempfile.TemporaryDirectory() as td:
+        out_fp = os.path.join(td, "test.csv")
+        result = runner.invoke(main, ["sc-col-descriptions", "-of", out_fp])
+        clear_loggers()
+
+        if result.exit_code != 0:
+            msg = "Failed with error {}".format(
+                traceback.print_exception(*result.exc_info)
+            )
+            raise RuntimeError(msg)
+
+        assert os.path.exists(out_fp)
+
+        desc = pd.read_csv(out_fp)
+        assert len(desc) > 0
+
+
+def test_col_desc_cli_for_sc(runner, clear_loggers):
+    """Test sc-col-descriptions for an input SC file via the CLI"""
+    test_sc = os.path.join(TESTDATADIR, "sc_out", "ri_sc_simple_lc.csv")
+    with tempfile.TemporaryDirectory() as td:
+        to_run_sc = os.path.join(td, "ri_sc_simple_lc.csv")
+        shutil.copy(test_sc, to_run_sc)
+
+        result = runner.invoke(main, ["sc-col-descriptions", "-sc", to_run_sc])
+        clear_loggers()
+
+        if result.exit_code != 0:
+            msg = "Failed with error {}".format(
+                traceback.print_exception(*result.exc_info)
+            )
+            raise RuntimeError(msg)
+
+        expected_fp = os.path.join(td, "ri_sc_simple_lc_column_lookup.csv")
+        assert os.path.exists(expected_fp)
+
+        desc = pd.read_csv(expected_fp)
+        sc = pd.read_csv(to_run_sc)
+
+        assert len(desc) > 0
+        assert all(col in sc.columns for col in desc["reV Column"])
 
 
 def execute_pytest(capture="all", flags="-rapP"):

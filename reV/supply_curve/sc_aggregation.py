@@ -245,6 +245,7 @@ class SupplyCurveAggFileHandler(AbstractAggFileHandler):
 class SupplyCurveAggregation(BaseAggregation):
     """SupplyCurveAggregation"""
 
+    # pylint: disable=line-too-long
     def __init__(self, excl_fpath, tm_dset, econ_fpath=None,
                  excl_dict=None, area_filter_kernel='queen', min_area=None,
                  resolution=64, excl_area=None, res_fpath=None, gids=None,
@@ -334,6 +335,12 @@ class SupplyCurveAggregation(BaseAggregation):
                         "exclude_nodata": True,
                         "nodata_value": -1
                     },
+                    "wildcard*exclusion": {
+                        "exclude_values": 1,
+                    },
+                    "wildcard_unique_exclusion": {
+                        "exclude_values": [1, 2, 3],
+                    },
                     "partial_setback": {
                         "use_as_weights": True
                     },
@@ -359,9 +366,24 @@ class SupplyCurveAggregation(BaseAggregation):
                     ...
                 }
 
-            Note that all the keys given in this dictionary should be
-            datasets of the `excl_fpath` file. If ``None`` or empty
-            dictionary, no exclusions are applied. By default, ``None``.
+            Note that all the keys given in this dictionary must be
+            datasets of the `excl_fpath` file or you will get an error.
+            You *may* include Unix-style wildcards (i.e. ``*``, ``?``,
+            or ``[]``) in the keys, but note that the same exclusion
+            configuration will be applied to **all** datasets that match
+            the wildcard pattern unless you explicitly override it for a
+            specific layer. For example, in the configuration above,
+            **all** of the layers matching the pattern
+            ``wildcard*exclusion`` will be used as exclusions where the
+            respective layer values equal ``1``, **except** for the
+            ``wildcard_unique_exclusion`` layer, which will be used as
+            an exclusion wherever that particular layer values equal
+            ``1``, ``2``, or ``3``. You can use this strategy to
+            "exclude" layers from the wildcard match - simply set the
+            ``exclude_values`` key to a value that does not exist in
+            that layer and it will be effectively ignored. If ``None``
+            or empty dictionary, no exclusions are applied.
+            By default, ``None``.
         area_filter_kernel : {"queen", "rook"}, optional
             Contiguous area filter method to use on final exclusions
             mask. The filters are defined as::
@@ -484,16 +506,36 @@ class SupplyCurveAggregation(BaseAggregation):
             The ``"output_layer_name"`` is the column name under which
             the aggregated data will appear in the output CSV file. The
             ``"output_layer_name"`` does not have to match the ``dset``
-            input value. The latter should match the layer name in the
+            input value. The ``dset`` should match the layer name in the
             HDF5 from which the data to aggregate should be pulled. The
-            ``method`` should be one of
-            ``{"mode", "mean", "min", "max", "sum", "category"}``,
-            describing how the high-resolution data should be aggregated
-            for each supply curve point. ``fpath`` is an optional key
-            that can point to an HDF5 file containing the layer data. If
-            left out, the data is assumed to exist in the file(s)
-            specified by the `excl_fpath` input. If ``None``, no data
-            layer aggregation is performed. By default, ``None``
+            ``method`` key should be one of the following:
+
+                - ``"mode"``: Output values will be the numerical mode
+                  of the non-excluded high resolution data layer cell
+                  values
+                - ``"mean"``: Output values will be the arithmetic mean
+                  of the non-excluded high resolution data layer cell
+                  values
+                - ``"min"``: Output values will be the numerical minimum
+                  value of the non-excluded high resolution data layer
+                  cell values
+                - ``"max"``: Output values will be the numerical maximum
+                  value of the non-excluded high resolution data layer
+                  cell values
+                - ``"sum"``: Output values will be the sum of the
+                  non-excluded high resolution data layer cell values
+                - ``"category"``: Output values will be a string
+                  representation of a dictionary where the keys are the
+                  unique values of the non-excluded high resolution data
+                  layer cells and the values are the *total
+                  high-resolution pixel area* corresponding to that data
+                  layer value
+
+            ``fpath`` is an optional key that can point to an HDF5 file
+            containing the layer data. If left out, the data is assumed
+            to exist in the file(s) specified by the `excl_fpath` input.
+            If ``None``, no data layer aggregation is performed.
+            By default, ``None``
         power_density : float | str, optional
             Power density value (in MW/km\ :sup:`2`) or filepath to
             variable power density CSV file containing the following
@@ -503,8 +545,15 @@ class SupplyCurveAggregation(BaseAggregation):
                 - ``power_density`` : power density value (in
                   MW/km\ :sup:`2`)
 
-            If ``None``, a constant power density is inferred from the
-            generation meta data technology. By default, ``None``.
+            If you are running reV for PV (more specifically, you have a
+            `dc_ac_ratio` in your generation file), then this input
+            should represent the \**DC power density*\*. For all other
+            technologies (wind, geothermal, etc), this input should
+            represent the \**AC power density*\*. If ``None``, a
+            constant power density value is pulled from
+            :obj:`~reV.supply_curve.points.GenerationSupplyCurvePoint.POWER_DENSITY`
+            by looking up the technology from the generation meta data.
+            By default, ``None``.
         friction_fpath : str, optional
             Filepath to friction surface data (cost based exclusions).
             Must be paired with the `friction_dset` input below. The
@@ -635,7 +684,7 @@ class SupplyCurveAggregation(BaseAggregation):
             Total included area for each supply curve point in km2. This
             is based on the nominal area of each exclusion pixel which
             by default is calculated from the exclusion profile
-            attributes. The NREL reV default is 0.0081 km2 pixels
+            attributes. The NLR reV default is 0.0081 km2 pixels
             (90m x 90m). The area sum considers partial inclusions.
         latitude : float
             Supply curve point centroid latitude coordinate, in degrees
@@ -1218,7 +1267,7 @@ class SupplyCurveAggregation(BaseAggregation):
                                          .format(gid, zone_id))
                         else:
                             pointsum['res_class'] = ri
-                            pointsum['zone_id'] = zone_id
+                            pointsum[SupplyCurveField.ZONE_ID] = zone_id
 
                             summary.append(pointsum)
                             logger.debug(

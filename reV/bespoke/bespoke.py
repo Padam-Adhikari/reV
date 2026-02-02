@@ -41,6 +41,7 @@ from reV.utilities import (
     SupplyCurveField,
     log_versions,
 )
+from reV.utilities.cli_functions import add_to_run_attrs
 from reV.utilities.exceptions import EmptySupplyCurvePointError, FileInputError
 
 logger = logging.getLogger(__name__)
@@ -258,8 +259,9 @@ class BespokeSinglePlant:
                  ws_bins=(0.0, 20.0, 5.0), wd_bins=(0.0, 360.0, 45.0),
                  excl_dict=None, inclusion_mask=None, data_layers=None,
                  resolution=64, excl_area=None, exclusion_shape=None,
-                 eos_mult_baseline_cap_mw=200, prior_meta=None, gid_map=None,
-                 bias_correct=None, pre_loaded_data=None, close=True):
+                 eos_mult_baseline_cap_mw=200, convex_hull_buffer=0,
+                 prior_meta=None, gid_map=None, bias_correct=None,
+                 pre_loaded_data=None, close=True):
         """
         Parameters
         ----------
@@ -309,7 +311,24 @@ class BespokeSinglePlant:
                   cost ($) as evaluated by
                   `balance_of_system_cost_function`
                 - ``self.wind_plant``: the SAM wind plant object,
-                  through which all SAM variables can be accessed
+                  through which all SAM variables can be accessed.
+
+                  .. IMPORTANT::
+                     When using the `self.wind_plant` variable,
+                     DO NOT include quotes around variable names (keys).
+
+                        - ❌ Wrong: ``self.wind_plant["annual_energy"]``
+                        - ✅ Correct: ``self.wind_plant[annual_energy]``
+
+                  .. IMPORTANT::
+                     It's possible for SAM wind plant variables to be
+                     ``None``, especially if something went wrong while
+                     optimizing the wind plant layout. In this case,
+                     your objective function may fail to evaluate and
+                     terminate the program entirely. To avoid this, add
+                     a default value for the variable in your objective
+                     function, like so:
+                     ``(self.wind_plant[annual_energy] or 0)``
 
         capital_cost_function : str
             The plant capital cost function as a string, must return the total
@@ -387,6 +406,10 @@ class BespokeSinglePlant:
             divided by the $-per-kW of a plant with this baseline
             capacity. By default, `200` (MW), which aligns the baseline
             with ATB assumptions. See here: https://tinyurl.com/y85hnu6h.
+        convex_hull_buffer : float, default=0
+            Buffer (in m) to apply to turbine location convex hull
+            before computing the convex hull area and capacity density.
+            By default, ``0``.
         prior_meta : pd.DataFrame | None
             Optional meta dataframe belonging to a prior run. This will only
             run the timeseries power generation step and assume that all of the
@@ -443,6 +466,11 @@ class BespokeSinglePlant:
                 eos_mult_baseline_cap_mw
             )
         )
+        logger.debug(
+            "Bespoke convex hull buffer: {:,} m".format(
+                convex_hull_buffer
+            )
+        )
 
         if isinstance(min_spacing, str) and min_spacing.endswith("x"):
             rotor_diameter = sam_sys_inputs["wind_turbine_rotor_diameter"]
@@ -475,6 +503,7 @@ class BespokeSinglePlant:
         self._ws_bins = ws_bins
         self._wd_bins = wd_bins
         self._baseline_cap_mw = eos_mult_baseline_cap_mw
+        self.convex_hull_buffer = convex_hull_buffer
 
         self._res_df = None
         self._prior_meta = prior_meta is not None
@@ -537,7 +566,8 @@ class BespokeSinglePlant:
         (ws_mean, *_mean) if requested.
         """
 
-        required = ("cf_mean", "annual_energy")
+        required = ("cf_mean", "annual_energy",
+                    "annual_wake_loss_internal_percent")
         for req in required:
             if req not in self._out_req:
                 self._out_req.append(req)
@@ -829,8 +859,12 @@ class BespokeSinglePlant:
         # `wind_plant_pd` PC may have PC losses applied, so keep the
         # original PC as to not double count losses here
         layout_config.pop("wind_turbine_powercurve_powerout", None)
-        config.update(layout_config)
 
+        # Don't bring over wind resource choice from `wind_plant_pd`
+        layout_config.pop("wind_resource_model_choice", None)
+        layout_config.pop("wind_resource_distribution", None)
+
+        config.update(layout_config)
         return config
 
     @property
@@ -1072,7 +1106,8 @@ class BespokeSinglePlant:
                 self.balance_of_system_cost_function,
                 self.include_mask,
                 self.pixel_side_length,
-                self.min_spacing)
+                self.min_spacing,
+                self.convex_hull_buffer)
 
         return self._plant_optm
 
@@ -1248,6 +1283,14 @@ class BespokeSinglePlant:
             for k, v in plant.outputs.items():
                 self._outputs[k + "-{}".format(year)] = v
 
+        self._compute_output_means()
+        self._add_extra_meta_columns()
+        logger.debug("Timeseries analysis complete!")
+
+        return self.outputs
+
+    def _compute_output_means(self):
+        """Compute time series means and store them in the outputs dict"""
         means = {}
         for k1, v1 in self._outputs.items():
             if isinstance(v1, Number) and parse_year(k1, option="boolean"):
@@ -1260,11 +1303,15 @@ class BespokeSinglePlant:
 
         self._outputs.update(means)
 
+    def _add_extra_meta_columns(self):
+        """Copy over some non-temporal datasets to meta"""
+
         self._meta[SupplyCurveField.MEAN_RES] = self.res_df["windspeed"].mean()
         self._meta[SupplyCurveField.MEAN_CF_DC] = np.nan
         self._meta[SupplyCurveField.MEAN_CF_AC] = np.nan
         self._meta[SupplyCurveField.MEAN_LCOE] = np.nan
         self._meta[SupplyCurveField.SC_POINT_ANNUAL_ENERGY_MWH] = np.nan
+        self._meta[SupplyCurveField.WAKE_LOSSES] = np.nan
         # copy dataset outputs to meta data for supply curve table summary
         if "cf_mean-means" in self.outputs:
             self._meta.loc[:, SupplyCurveField.MEAN_CF_AC] = self.outputs[
@@ -1279,10 +1326,10 @@ class BespokeSinglePlant:
             self._meta[SupplyCurveField.SC_POINT_ANNUAL_ENERGY_MWH] = (
                 self.outputs["annual_energy-means"] / 1000
             )
-
-        logger.debug("Timeseries analysis complete!")
-
-        return self.outputs
+        if "annual_wake_loss_internal_percent-means" in self.outputs:
+            self._meta[SupplyCurveField.WAKE_LOSSES] = (
+                self.outputs["annual_wake_loss_internal_percent-means"]
+            )
 
     def run_plant_optimization(self):
         """Run the wind plant layout optimization and export outputs
@@ -1314,10 +1361,14 @@ class BespokeSinglePlant:
         system_capacity_kw = self.plant_optimizer.capacity
         self._outputs["system_capacity"] = system_capacity_kw
 
-        txc = [int(np.round(c)) for c in self.plant_optimizer.turbine_x]
-        tyc = [int(np.round(c)) for c in self.plant_optimizer.turbine_y]
-        pxc = [int(np.round(c)) for c in self.plant_optimizer.x_locations]
-        pyc = [int(np.round(c)) for c in self.plant_optimizer.y_locations]
+        txc = [float(np.round(c, decimals=2))
+               for c in self.plant_optimizer.turbine_x]
+        tyc = [float(np.round(c, decimals=2))
+               for c in self.plant_optimizer.turbine_y]
+        pxc = [float(np.round(c, decimals=2))
+               for c in self.plant_optimizer.x_locations]
+        pyc = [float(np.round(c, decimals=2))
+               for c in self.plant_optimizer.y_locations]
 
         txc = json.dumps(txc)
         tyc = json.dumps(tyc)
@@ -1500,8 +1551,8 @@ class BespokeWindPlants(BaseAggregation):
                  excl_dict=None, area_filter_kernel='queen', min_area=None,
                  resolution=64, excl_area=None, data_layers=None,
                  pre_extract_inclusions=False, eos_mult_baseline_cap_mw=200,
-                 prior_run=None, gid_map=None, bias_correct=None,
-                 pre_load_data=False):
+                 convex_hull_buffer=0, prior_run=None, gid_map=None,
+                 bias_correct=None, pre_load_data=False):
         """reV bespoke analysis class.
 
         Much like generation, ``reV`` bespoke analysis runs SAM
@@ -1511,7 +1562,7 @@ class BespokeWindPlants(BaseAggregation):
         However, unlike ``reV`` generation, bespoke analysis is
         performed on the supply-curve grid resolution, and the plant
         layout is optimized for every supply-curve point based on an
-        optimization objective specified by the user. See the NREL
+        optimization objective specified by the user. See the NLR
         publication on the bespoke methodology for more information.
 
         See the documentation for the ``reV`` SAM class (e.g.
@@ -1532,7 +1583,7 @@ class BespokeWindPlants(BaseAggregation):
             uniquely defined (i.e.only appear once and in a single
             input file).
         res_fpath : str
-            Unix shell style path to wind resource HDF5 file in NREL WTK
+            Unix shell style path to wind resource HDF5 file in NLR WTK
             format. Can also be a path including a wildcard input like
             ``/h5_dir/prefix*suffix`` to run bespoke on multiple years
             of resource data. Can also be an explicit list of resource
@@ -1600,7 +1651,24 @@ class BespokeWindPlants(BaseAggregation):
                   cost ($) as evaluated by
                   `balance_of_system_cost_function`
                 - ``self.wind_plant``: the SAM wind plant object,
-                  through which all SAM variables can be accessed
+                  through which all SAM variables can be accessed.
+
+                  .. IMPORTANT::
+                     When using the `self.wind_plant` variable,
+                     DO NOT include quotes around variable names (keys).
+
+                        - ❌ Wrong: ``self.wind_plant["annual_energy"]``
+                        - ✅ Correct: ``self.wind_plant[annual_energy]``
+
+                  .. IMPORTANT::
+                     It's possible for SAM wind plant variables to be
+                     ``None``, especially if something went wrong while
+                     optimizing the wind plant layout. In this case,
+                     your objective function may fail to evaluate and
+                     terminate the program entirely. To avoid this, add
+                     a default value for the variable in your objective
+                     function, like so:
+                     ``(self.wind_plant[annual_energy] or 0)``
 
         capital_cost_function : str
             The plant capital cost function written out as a string.
@@ -1866,6 +1934,10 @@ class BespokeWindPlants(BaseAggregation):
             divided by the $-per-kW of a plant with this baseline
             capacity. By default, `200` (MW), which aligns the baseline
             with ATB assumptions. See here: https://tinyurl.com/y85hnu6h.
+        convex_hull_buffer : float, default=0
+            Buffer (in m) to apply to turbine location convex hull
+            before computing the convex hull area and capacity density.
+            By default, ``0``.
         prior_run : str, optional
             Optional filepath to a bespoke output HDF5 file belonging to
             a prior run. If specified, this module will only run the
@@ -1990,6 +2062,7 @@ class BespokeWindPlants(BaseAggregation):
         self._wd_bins = wd_bins
         self._data_layers = data_layers
         self._eos_mult_baseline_cap_mw = eos_mult_baseline_cap_mw
+        self._convex_hull_buffer = convex_hull_buffer
         self._prior_meta = self._parse_prior_run(prior_run)
         self._gid_map = BespokeSinglePlant._parse_gid_map(gid_map)
         self._bias_correct = Gen._parse_bc(bias_correct)
@@ -2309,7 +2382,7 @@ class BespokeWindPlants(BaseAggregation):
         )
         return site_sys_inputs
 
-    def _init_fout(self, out_fpath, sample):
+    def _init_fout(self, out_fpath, sample, config_file=None):
         """Initialize the bespoke output h5 file with meta and time index dsets
 
         Parameters
@@ -2320,12 +2393,21 @@ class BespokeWindPlants(BaseAggregation):
         sample : dict
             A single sample BespokeSinglePlant output dict that has been run
             and has output data.
+        config_file : str, optional
+            Path to config file used for this bespoke run (if
+            applicable). This is used to store information about the run
+            in the output file attrs. By default, ``None``.
         """
         out_dir = os.path.dirname(out_fpath)
         if not os.path.exists(out_dir):
             create_dirs(out_dir)
 
+        global_attrs = add_to_run_attrs(config_file=config_file,
+                                        module=ModuleName.BESPOKE)
+
         with Outputs(out_fpath, mode="w") as f:
+            for key, value in global_attrs.items():
+                f.h5.attrs[key] = value
             f._set_meta("meta", self.meta, attrs={})
             ti_dsets = [
                 d for d in sample.keys() if d.startswith("time_index-")
@@ -2387,7 +2469,7 @@ class BespokeWindPlants(BaseAggregation):
 
         return full_arr
 
-    def save_outputs(self, out_fpath):
+    def save_outputs(self, out_fpath, config_file=None):
         """Save Bespoke Wind Plant optimization outputs to disk.
 
         Parameters
@@ -2395,6 +2477,10 @@ class BespokeWindPlants(BaseAggregation):
         out_fpath : str
             Full filepath to an output .h5 file to save Bespoke data to. The
             parent directories will be created if they do not already exist.
+        config_file : str, optional
+            Path to config file used for this bespoke run (if
+            applicable). This is used to store information about the run
+            in the output file attrs. By default, ``None``.
 
         Returns
         -------
@@ -2419,7 +2505,7 @@ class BespokeWindPlants(BaseAggregation):
             return out_fpath
 
         sample = self.outputs[self.completed_gids[0]]
-        self._init_fout(out_fpath, sample)
+        self._init_fout(out_fpath, sample, config_file=config_file)
 
         dsets = [
             d
@@ -2466,8 +2552,9 @@ class BespokeWindPlants(BaseAggregation):
                    area_filter_kernel='queen', min_area=None,
                    resolution=64, excl_area=0.0081, data_layers=None,
                    gids=None, exclusion_shape=None, slice_lookup=None,
-                   eos_mult_baseline_cap_mw=200, prior_meta=None,
-                   gid_map=None, bias_correct=None, pre_loaded_data=None):
+                   eos_mult_baseline_cap_mw=200, convex_hull_buffer=0,
+                   prior_meta=None, gid_map=None, bias_correct=None,
+                   pre_loaded_data=None):
         """
         Standalone serial method to run bespoke optimization.
         See BespokeWindPlants docstring for parameter description.
@@ -2533,6 +2620,7 @@ class BespokeWindPlants(BaseAggregation):
                         data_layers=data_layers,
                         exclusion_shape=exclusion_shape,
                         eos_mult_baseline_cap_mw=eos_mult_baseline_cap_mw,
+                        convex_hull_buffer=convex_hull_buffer,
                         prior_meta=prior_meta,
                         gid_map=gid_map,
                         bias_correct=bias_correct,
@@ -2625,6 +2713,7 @@ class BespokeWindPlants(BaseAggregation):
                     exclusion_shape=self.shape,
                     slice_lookup=copy.deepcopy(self.slice_lookup),
                     eos_mult_baseline_cap_mw=self._eos_mult_baseline_cap_mw,
+                    convex_hull_buffer=self._convex_hull_buffer,
                     prior_meta=self._get_prior_meta(gid),
                     gid_map=self._gid_map,
                     bias_correct=self._get_bc_for_gid(gid),
@@ -2650,7 +2739,7 @@ class BespokeWindPlants(BaseAggregation):
 
         return out
 
-    def run(self, out_fpath=None, max_workers=None):
+    def run(self, out_fpath=None, max_workers=None, config_file=None):
         """Run the bespoke wind plant optimization in serial or parallel.
 
         Parameters
@@ -2663,6 +2752,10 @@ class BespokeWindPlants(BaseAggregation):
         max_workers : int, optional
             Number of local workers to run on. If ``None``, uses all
             available cores (typically 36). By default, ``None``.
+        config_file : str, optional
+            Path to config file used for this bespoke run (if
+            applicable). This is used to store information about the run
+            in the output file attrs. By default, ``None``.
 
         Returns
         -------
@@ -2689,6 +2782,7 @@ class BespokeWindPlants(BaseAggregation):
                 afk = self._area_filter_kernel
                 i_bc = self._get_bc_for_gid(gid)
                 ebc = self._eos_mult_baseline_cap_mw
+                chb = self._convex_hull_buffer
 
                 si = self.run_serial(self._excl_fpath,
                                      self._res_fpath,
@@ -2713,6 +2807,7 @@ class BespokeWindPlants(BaseAggregation):
                                      data_layers=self._data_layers,
                                      slice_lookup=slice_lookup,
                                      eos_mult_baseline_cap_mw=ebc,
+                                     convex_hull_buffer=chb,
                                      prior_meta=prior_meta,
                                      gid_map=self._gid_map,
                                      bias_correct=i_bc,
@@ -2723,6 +2818,6 @@ class BespokeWindPlants(BaseAggregation):
             self._outputs = self.run_parallel(max_workers=max_workers)
 
         if out_fpath is not None:
-            out_fpath = self.save_outputs(out_fpath)
+            out_fpath = self.save_outputs(out_fpath, config_file=config_file)
 
         return out_fpath

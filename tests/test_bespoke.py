@@ -8,6 +8,7 @@ import shutil
 import tempfile
 import traceback
 from glob import glob
+from pathlib import Path
 
 import h5py
 import numpy as np
@@ -19,7 +20,8 @@ from rex import Resource
 from reV import TESTDATADIR
 from reV.econ.utilities import lcoe_fcr
 from reV.bespoke.bespoke import BespokeSinglePlant, BespokeWindPlants
-from reV.bespoke.place_turbines import PlaceTurbines, _compute_nn_conn_dist
+from reV.bespoke.place_turbines import (PlaceTurbines, _compute_nn_conn_dist,
+                                        _fix_wp_keys)
 from reV.cli import main
 from reV.handlers.outputs import Outputs
 from reV.losses.power_curve import PowerCurveLossesMixin
@@ -72,18 +74,21 @@ SAM_CONFIGS = {"default": SAM_SYS_INPUTS}
 
 
 CAP_COST_FUN = (
-    "140 * system_capacity "
-    "* np.exp(-system_capacity / 1E5 * 0.1 + (1 - 0.1))"
+    "[140][0] * system_capacity "
+    "* np.exp(-system_capacity / 1E5 * 0.1 + (1 - 0.1)) "
+    "+ (self.wind_plant[annual_energy] or 0) * 0"
 )
 FOC_FUN = (
-    "60 * system_capacity "
-    "* np.exp(-system_capacity / 1E5 * 0.1 + (1 - 0.1))"
+    "[60][0] * system_capacity "
+    "* np.exp(-system_capacity / 1E5 * 0.1 + (1 - 0.1)) "
+    "+ (self.wind_plant[annual_energy] or 0) * 0"
 )
-VOC_FUN = "3"
-BOS_FUN = '0'
+VOC_FUN = "[3][0]"
+BOS_FUN = '0 * (self.wind_plant[annual_energy] or 0)'
 OBJECTIVE_FUNCTION = (
     "(0.0975 * capital_cost + fixed_operating_cost) "
-    "/ aep + variable_operating_cost"
+    "/ aep + variable_operating_cost "
+    "+ (self.wind_plant[annual_energy] or 0) * 0"
 )
 EXPECTED_META_COLUMNS = ["gid",  # needed for H5 collection to work properly
                          SupplyCurveField.SC_POINT_GID,
@@ -98,6 +103,7 @@ EXPECTED_META_COLUMNS = ["gid",  # needed for H5 collection to work properly
                          SupplyCurveField.CAPACITY_DC_MW,
                          SupplyCurveField.MEAN_CF_AC,
                          SupplyCurveField.MEAN_CF_DC,
+                         SupplyCurveField.WAKE_LOSSES,
                          SupplyCurveField.SC_POINT_ANNUAL_ENERGY_MWH,
                          SupplyCurveField.EOS_MULT,
                          SupplyCurveField.REG_MULT,
@@ -121,7 +127,8 @@ EXPECTED_META_COLUMNS = ["gid",  # needed for H5 collection to work properly
                          SupplyCurveField.BESPOKE_BALANCE_OF_SYSTEM_COST]
 
 
-def test_turbine_placement(gid=33):
+@pytest.mark.parametrize("use_wp", [False, True])
+def test_turbine_placement(use_wp, gid=33):
     """Test turbine placement with zero available area."""
     output_request = ("system_capacity", "cf_mean", "cf_profile")
     with tempfile.TemporaryDirectory() as td:
@@ -140,9 +147,16 @@ def test_turbine_placement(gid=33):
             excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1,
             sc_resolution=2560
         )
+
+        objective_function = OBJECTIVE_FUNCTION
+        if use_wp:
+            objective_function = (
+                "(0.0975 * capital_cost + fixed_operating_cost) "
+                "/ self.wind_plant[annual_energy] + variable_operating_cost"
+            )
         bsp = BespokeSinglePlant(gid, excl_fp, res_fp, TM_DSET,
                                  sam_sys_inputs,
-                                 OBJECTIVE_FUNCTION,
+                                 objective_function,
                                  CAP_COST_FUN,
                                  FOC_FUN,
                                  VOC_FUN,
@@ -192,6 +206,10 @@ def test_turbine_placement(gid=33):
             place_optimizer.aep == place_optimizer.wind_plant.annual_energy()
         )
 
+        # pylint: disable=W0641
+        self = place_optimizer
+        # pylint: disable=W0641
+        annual_energy = "annual_energy"
         # pylint: disable=W0641
         system_capacity = place_optimizer.capacity
         # pylint: disable=W0641
@@ -307,6 +325,67 @@ def test_correct_turb_location(gid=33):
 
         assert pt.x_locations[0] == 62 * 90
         assert pt.y_locations[0] == 62 * 90
+
+        bsp.close()
+
+
+def test_correct_turb_chb(gid=33):
+    """Test turbine convex hull buffered correctly"""
+    output_request = ("system_capacity", "cf_mean", "cf_profile")
+
+    objective_function = (
+        "(0.0975 * capital_cost + fixed_operating_cost) "
+        "/ (aep + 1E-6) + variable_operating_cost"
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        res_fp = os.path.join(td, "ri_100_wtk_{}.h5")
+        excl_fp = os.path.join(td, "ri_exclusions.h5")
+        shutil.copy(EXCL, excl_fp)
+        shutil.copy(RES.format(2012), res_fp.format(2012))
+        shutil.copy(RES.format(2013), res_fp.format(2013))
+        res_fp = res_fp.format("*")
+
+        TechMapping.run(
+            excl_fp, RES.format(2012), dset=TM_DSET, max_workers=1,
+            sc_resolution=2560
+        )
+        bsp = BespokeSinglePlant(gid, excl_fp, res_fp, TM_DSET,
+                                 SAM_SYS_INPUTS,
+                                 objective_function, CAP_COST_FUN,
+                                 FOC_FUN, VOC_FUN, BOS_FUN,
+                                 excl_dict=EXCL_DICT,
+                                 output_request=output_request,
+                                 )
+
+        include_mask = np.zeros_like(bsp.include_mask)
+        include_mask[1, -2] = 1
+        pt = PlaceTurbines(bsp.wind_plant_pd, bsp.objective_function,
+                           bsp.capital_cost_function,
+                           bsp.fixed_operating_cost_function,
+                           bsp.variable_operating_cost_function,
+                           bsp.balance_of_system_cost_function,
+                           include_mask, pixel_side_length=90,
+                           min_spacing=45)
+
+        pt.define_exclusions()
+        pt.initialize_packing()
+        pt.optimized_design_variables = pt.x_locations >= 0
+
+        pt_buffered = PlaceTurbines(bsp.wind_plant_pd, bsp.objective_function,
+                                    bsp.capital_cost_function,
+                                    bsp.fixed_operating_cost_function,
+                                    bsp.variable_operating_cost_function,
+                                    bsp.balance_of_system_cost_function,
+                                    include_mask, pixel_side_length=90,
+                                    min_spacing=45, convex_hull_buffer=100)
+
+        pt_buffered.define_exclusions()
+        pt_buffered.initialize_packing()
+        pt_buffered.optimized_design_variables = pt.x_locations >= 0
+
+        assert pt.convex_hull_area > 0
+        assert pt_buffered.convex_hull_area > pt.convex_hull_area
 
         bsp.close()
 
@@ -669,6 +748,7 @@ def test_bespoke():
                 "cf_mean-means",
                 "extra_unused_data-2012",
                 "ws_mean",
+                "annual_wake_loss_internal_percent-means"
             )
             for dset in dsets_1d:
                 assert dset in list(f)
@@ -1349,14 +1429,21 @@ def test_bespoke_prior_run():
         # multi-year means should not match the 2nd run with 2013 only.
         # 2013 values should match exactly
         assert not np.allclose(data1["cf_mean-means"], data2["cf_mean-means"])
-        assert np.allclose(data1["cf_mean-2013"], data2["cf_mean-2013"])
+        assert np.allclose(data1["cf_mean-2013"], data2["cf_mean-2013"],
+                           rtol=1e-6, atol=1e-9)
+
+        assert not np.allclose(data1["annual_energy-means"],
+                               data2["annual_energy-means"])
+        assert np.allclose(data1["annual_energy-2013"],
+                           data2["annual_energy-2013"], rtol=1e-6, atol=1e-9)
 
         assert not np.allclose(
-            data1["annual_energy-means"], data2["annual_energy-means"]
+            data1["annual_wake_loss_internal_percent-means"],
+            data2["annual_wake_loss_internal_percent-means"]
         )
-        assert np.allclose(
-            data1["annual_energy-2013"], data2["annual_energy-2013"]
-        )
+        assert np.allclose(data1["annual_wake_loss_internal_percent-2013"],
+                           data2["annual_wake_loss_internal_percent-2013"],
+                           rtol=1e-6, atol=1e-9)
 
 
 def test_gid_map():
@@ -1664,6 +1751,13 @@ def test_cli(runner, clear_loggers):
                 assert f[dset].shape[1] == len(meta)
                 assert f[dset].any()  # not all zeros
 
+            assert "bespoke_config_fp" in f.h5.attrs
+            assert "bespoke_config" in f.h5.attrs
+
+            config_fp = Path(config_path).expanduser().resolve()
+            assert Path(f.h5.attrs["bespoke_config_fp"]) == config_fp
+            assert f.h5.attrs["bespoke_config"] == json.dumps(config)
+
         clear_loggers()
 
 
@@ -1716,3 +1810,27 @@ def test_bespoke_5min_sample():
             assert len(f["time_index-2010"]) == 8760
             assert len(f["windspeed-2010"]) == 8760
             assert len(f["winddirection-2010"]) == 8760
+
+
+def test_fix_wp_keys():
+    """Test the `_fix_wp_keys` function"""
+
+    input_text = '''
+    self.wind_plant[annual_energy]
+    [1, 2, 3]
+    self.wind_plant[some_var]
+    self.wind_plant[ another_var ]
+    self.wind_plant[ a_third_var]
+    self.wind_plant[  a_third_var ]
+    '''
+
+    expected_output_text = '''
+    self.wind_plant["annual_energy"]
+    [1, 2, 3]
+    self.wind_plant["some_var"]
+    self.wind_plant[ "another_var" ]
+    self.wind_plant[ "a_third_var"]
+    self.wind_plant[  "a_third_var" ]
+    '''
+
+    assert _fix_wp_keys(input_text) == expected_output_text

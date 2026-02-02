@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=anomalous-backslash-in-string
 """
 reV supply curve points frameworks.
 """
@@ -1452,8 +1453,12 @@ class GenerationSupplyCurvePoint(AggregationSupplyCurvePoint):
     """Supply curve point summary framework that ties a reV SC point to its
     respective generation and resource data."""
 
-    # technology-dependent power density estimates in MW/km2
     POWER_DENSITY = {"pv": 36, "wind": 3}
+    """Technology-dependent power density estimates (in MW/km\ :sup:`2`).
+
+    The PV power density is a \**DC power density*\*, while the wind power
+    density is an \**AC power density*\*.
+    """
 
     def __init__(
         self,
@@ -1857,6 +1862,15 @@ class GenerationSupplyCurvePoint(AggregationSupplyCurvePoint):
         return None
 
     @property
+    def mean_wake_losses(self):
+        """float: Mean wake losses, if applicable."""
+        if "annual_wake_loss_internal_percent-means" not in self.gen.datasets:
+            return None
+
+        wakes = self.gen["annual_wake_loss_internal_percent-means"]
+        return self.exclusion_weighted_mean(wakes)
+
+    @property
     def mean_lcoe(self):
         """Get the mean LCOE for the non-excluded data.
 
@@ -2107,7 +2121,7 @@ class GenerationSupplyCurvePoint(AggregationSupplyCurvePoint):
             `None` for solar runs with "dc_ac_ratio" dataset in the
             generation file
         """
-        if self.power_density_ac is None:
+        if "dc_ac_ratio" not in self.gen.datasets:
             return None
 
         return self.area * self.power_density_ac
@@ -2129,7 +2143,7 @@ class GenerationSupplyCurvePoint(AggregationSupplyCurvePoint):
             `None` for solar runs with "dc_ac_ratio" dataset in the
             generation file
         """
-        if self.power_density_ac is None:
+        if "dc_ac_ratio" not in self.gen.datasets:
             return None
 
         return self.area * self.power_density
@@ -2368,6 +2382,7 @@ class GenerationSupplyCurvePoint(AggregationSupplyCurvePoint):
             SupplyCurveField.MEAN_CF_DC: self.mean_cf_dc,
             SupplyCurveField.MEAN_LCOE: self.mean_lcoe,
             SupplyCurveField.MEAN_RES: self.mean_res,
+            SupplyCurveField.WAKE_LOSSES: self.mean_wake_losses,
             SupplyCurveField.AREA_SQ_KM: self.area,
             SupplyCurveField.CAPACITY_AC_MW: (
                 self.capacity if self.capacity_ac is None else self.capacity_ac
